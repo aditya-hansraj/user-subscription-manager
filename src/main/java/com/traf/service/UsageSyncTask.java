@@ -64,4 +64,21 @@ public class UsageSyncTask implements Managed {
             }
         }
     }
+
+    public void syncToDatabaseForUser(long userId, int count) {
+        try (Session session = sessionFactory.openSession()) {
+            ManagedSessionContext.bind(session);
+            Transaction transaction = session.beginTransaction();
+            try {
+                subscriptionDAO.updateUsage(userId, count);
+                transaction.commit();
+                System.out.println(">>> [EVICTION SYNC] Persisted usage for user: " + userId);
+            } catch (Exception e) {
+                transaction.rollback();
+                e.printStackTrace();
+            } finally {
+                ManagedSessionContext.unbind(sessionFactory);
+            }
+        }
+    }
  }
