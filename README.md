@@ -1,6 +1,6 @@
 # User Subscription Manager & Rate Limiter
 
-A high-performance Dropwizard microservice for managing user subscriptions and enforcing API rate limits. It leverages Google Guice for DI, Hibernate for persistence, and Caffeine for ultra-fast in-memory counters with a write-behind strategy to MySQL.
+A high-performance Dropwizard microservice for managing user subscriptions and enforcing API rate limits. It uses Google Guice for DI, Hibernate for persistence, Caffeine for in-memory caching, and a uniform ApiResponse envelope with graceful exception handling.
 
 ---
 
@@ -14,6 +14,8 @@ A high-performance Dropwizard microservice for managing user subscriptions and e
   - Database migrations
 - Build & Run
 - API Reference
+- Error Handling & ApiResponse
+- Caching
 - Rate Limiting & Usage Sync
 - Development Notes
 - Troubleshooting
@@ -25,6 +27,7 @@ This service provides:
 - Subscription lifecycle management: create, list, cancel, upgrade.
 - Smart rate limiting using Caffeine cache with per-user usage counters.
 - Write-behind persistence to reduce DB load (periodic flush to MySQL).
+- Consistent JSON responses via `ApiResponse<T>` and custom exceptions mapped globally.
 
 ---
 
@@ -32,15 +35,20 @@ This service provides:
 - Dropwizard: Application framework, Jersey resources, lifecycle management.
 - Google Guice: Dependency injection (see `SubscriptionModule`).
 - Hibernate: ORM with `Subscription`, `User`, and `Plan` entities.
-- Caffeine Cache: In-memory counters for per-user usage.
+- Caffeine Cache:
+  - In-memory counters for per-user API usage.
+  - In-memory cache for user existence (to avoid DB hits on common validation paths).
 - Write-Behind Task: `UsageSyncTask` periodically flushes cached usage to DB.
+- Uniform Response Envelope: `com.traf.core.ApiResponse<T>` for all API responses.
+- Global Exception Mapping: `GenericExceptionMapper` converts custom exceptions into `ApiResponse.fail` with appropriate HTTP status codes.
 
 Key packages:
 - `com.traf.resources`: HTTP endpoints (Jersey).
-- `com.traf.service`: Business logic and background tasks.
+- `com.traf.service`: Business logic and background tasks; includes `UserService` using cache for user existence.
 - `com.traf.db`: DAOs for database access.
 - `com.traf.repository`: Cache-backed usage repository.
-- `com.traf.core`: Entities.
+- `com.traf.core`: Entities and `ApiResponse`.
+- `com.traf.exceptions`: Custom exceptions (`BadRequestException`, `NotFoundException`, `ConflictException`, `RateLimitExceededException`).
 
 ---
 
@@ -90,7 +98,7 @@ database:
 Liquibase migrations create `users`, `plans`, and `subscriptions` tables including the `current_usage` column.
 
 ```bash
-java -jar target/user-subscription-manager-1.0-SNAPSHOT.jar db migrate src/main/resources/config.yml
+java -jar target/user-subscription-manager-1.1-SNAPSHOT.jar db migrate src/main/resources/config.yml
 ```
 
 ---
@@ -108,7 +116,7 @@ mvn package
 Start the server:
 
 ```bash
-java -jar target/user-subscription-manager-1.0-SNAPSHOT.jar server src/main/resources/config.yml
+java -jar target/user-subscription-manager-1.1-SNAPSHOT.jar server src/main/resources/config.yml
 ```
 
 - App port (default): `8080`
@@ -117,9 +125,19 @@ java -jar target/user-subscription-manager-1.0-SNAPSHOT.jar server src/main/reso
 ---
 
 ## API Reference
-All endpoints return/accept JSON.
+All endpoints return/accept JSON using the `ApiResponse` envelope.
 
-Base path: `/` (resources under `/subscriptions`, `/plans`, `/users`, etc.)
+Base path: `/` (resources under `/subscriptions`, `/plans`, `/users`, `/api`)
+
+### ApiResponse format
+- Success:
+  ```json
+  { "success": true, "data": { /* payload */ } }
+  ```
+- Error:
+  ```json
+  { "success": false, "error": { "code": 404, "message": "User not found" } }
+  ```
 
 ### Subscriptions
 - Create subscription
@@ -128,32 +146,73 @@ Base path: `/` (resources under `/subscriptions`, `/plans`, `/users`, etc.)
     ```json
     { "userId": 1, "planId": 2 }
     ```
-  - Response: `Subscription`
+  - Response: `ApiResponse<Subscription>`
 
 - List subscriptions for user
   - `GET /subscriptions/user/{userId}`
-  - Response: `Subscription[]`
+  - Response: `ApiResponse<Subscription[]>`
 
 - Cancel subscription
   - `PUT /subscriptions/{id}/cancel`
-  - Response: updated `Subscription`
+  - Response: `ApiResponse<Subscription>`
 
 - Upgrade plan
   - `PUT /subscriptions/{id}/upgrade?planId={newPlanId}`
-  - Response: updated `Subscription`
+  - Response: `ApiResponse<Subscription>`
 
 ### Plans
-- Typical endpoints (if exposed):
+- List plans
   - `GET /plans`
-  - `GET /plans/{id}`
+  - Response: `ApiResponse<Plan[]>`
+- Create plan
+  - `POST /plans`
+  - Body: `Plan`
+  - Response: `ApiResponse<Plan>`
+- Delete plan
+  - `DELETE /plans?id={id}`
+  - Response: `ApiResponse<Long>`
 
 ### Users
-- Typical endpoints (if exposed):
+- List users
   - `GET /users`
+  - Response: `ApiResponse<User[]>`
+- Get user by id
   - `GET /users/{id}`
+  - Response: `ApiResponse<User>`
+- Create user
+  - `POST /users`
+  - Body: `User`
+  - Response: `ApiResponse<User>`
+- Delete user
+  - `DELETE /users/{id}`
+  - Response: `ApiResponse<Long>`
 
-### Health
-- Dropwizard admin endpoints on `:8081` (health, metrics, threads).
+### Rate Limiter
+- Ping (rate-limited)
+  - `GET /api/ping?userId={id}`
+  - Response: `ApiResponse<String>`
+  - Errors:
+    - 400 if `userId` invalid
+    - 429 if rate limit exceeded
+
+---
+
+## Error Handling & ApiResponse
+- All exceptions are handled globally by `GenericExceptionMapper`.
+- Resources throw custom exceptions for invalid input or missing entities:
+  - `BadRequestException` → 400
+  - `NotFoundException` → 404
+  - `ConflictException` → 409
+  - `RateLimitExceededException` → 429
+- The mapper converts exceptions into `ApiResponse.fail(code, message)` ensuring consistent JSON error responses.
+
+---
+
+## Caching
+- Usage counters: `Cache<Long, Integer>` in `SubscriptionModule`, used by `UserUsageRepository`.
+- User existence cache: `Cache<Long, Boolean>` to avoid DB hits on common validation paths in `UserService.exists(userId)`.
+  - Checks cache first; on miss, queries `UserDAO` and populates the cache.
+  - TTL and size are tuned in `SubscriptionModule`.
 
 ---
 
@@ -175,9 +234,10 @@ Base path: `/` (resources under `/subscriptions`, `/plans`, `/users`, etc.)
 ---
 
 ## Development Notes
-- DI wiring in `SubscriptionModule` provides DAOs, `SessionFactory`, and the `Cache<Long, Integer>` bean.
+- DI wiring in `SubscriptionModule` provides DAOs, `SessionFactory`, and caches.
 - Use `@UnitOfWork` on resource methods to manage Hibernate sessions.
 - Entities: ensure `Subscription` maps fields such as `status`, `plan`, `user`, and `currentUsage`.
+- `UserService` provides cached user existence checks and user retrieval.
 
 ---
 
@@ -186,6 +246,7 @@ Base path: `/` (resources under `/subscriptions`, `/plans`, `/users`, etc.)
 - Migration failures: confirm the DB exists and you’re using the correct config path.
 - 404s on endpoints: confirm resources are registered and the server is running.
 - Usage not persisting: make sure `UsageSyncTask` is managed by environment lifecycle.
+- Ambiguous resource paths: ensure `@GET` methods have distinct `@Path` annotations (e.g., `/users` vs `/users/{id}`).
 
 ---
 

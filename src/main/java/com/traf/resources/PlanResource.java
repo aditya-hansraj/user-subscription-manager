@@ -1,7 +1,8 @@
 package com.traf.resources;
 
+import com.traf.core.ApiResponse;
 import com.traf.core.Plan;
-import com.traf.db.PLanDAO;
+import com.traf.db.PlanDAO;
 import io.dropwizard.hibernate.UnitOfWork;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.*;
@@ -14,30 +15,52 @@ import java.util.List;
 @Consumes(MediaType.APPLICATION_JSON)
 public class PlanResource {
 
-    private final PLanDAO pLanDAO;
+    private final PlanDAO pLanDAO;
 
     @Inject
-    public PlanResource(PLanDAO pLanDAO) {
+    public PlanResource(PlanDAO pLanDAO) {
         this.pLanDAO = pLanDAO;
     }
 
     @POST
     @UnitOfWork
-    public Plan CreatePlan(Plan plan) {
-        return pLanDAO.create(plan);
+    public ApiResponse<Plan> CreatePlan(Plan plan) {
+        if (plan == null) {
+            return ApiResponse.fail(400, "Plan is null");
+        }
+        try {
+            Plan created = pLanDAO.create(plan);
+            return ApiResponse.success(created);
+        } catch (Exception e) {
+            return ApiResponse.fail(500, "Failed to create plan: " + e.getMessage());
+        }
     }
 
     @GET
     @UnitOfWork
-    public List<Plan> getAllPlans() {
-        return pLanDAO.findAll();
+    public ApiResponse<List<Plan>> getAllPlans() {
+        try {
+            List<Plan> plans = pLanDAO.findAll();
+            return ApiResponse.success(plans);
+        } catch (Exception e) {
+            return ApiResponse.fail(500, "Failed to fetch plans: " + e.getMessage());
+        }
     }
 
     @DELETE
     @UnitOfWork
-    public long deletePlan(@QueryParam("id") long id) throws Exception {
-        boolean res = pLanDAO.deleteById(id);
-        return res ? id : 0;
+    public ApiResponse<Long> deletePlan(@QueryParam("id") long id) {
+        if (id <= 0) {
+            return ApiResponse.fail(400, "Valid plan id is required");
+        }
+        try {
+            boolean deleted = pLanDAO.deleteById(id);
+            if (deleted) {
+                return ApiResponse.success(id);
+            }
+            return ApiResponse.fail(404, "Plan not found for id: " + id);
+        } catch (Exception e) {
+            return ApiResponse.fail(500, "Failed to delete plan: " + e.getMessage());
+        }
     }
 }
-

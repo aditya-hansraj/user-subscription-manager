@@ -7,8 +7,8 @@ import org.hibernate.SessionFactory;
 import java.util.List;
 import java.util.Optional;
 
-public class PLanDAO extends AbstractDAO<Plan> {
-    public PLanDAO(SessionFactory sessionFactory) {
+public class PlanDAO extends AbstractDAO<Plan> {
+    public PlanDAO(SessionFactory sessionFactory) {
         super(sessionFactory);
     }
 

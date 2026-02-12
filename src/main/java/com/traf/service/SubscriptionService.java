@@ -3,7 +3,7 @@ package com.traf.service;
 import com.traf.core.Plan;
 import com.traf.core.Subscription;
 import com.traf.core.User;
-import com.traf.db.PLanDAO;
+import com.traf.db.PlanDAO;
 import com.traf.db.SubscriptionDAO;
 import com.traf.db.UserDAO;
 import jakarta.inject.Inject;
@@ -13,12 +13,12 @@ import java.util.List;
 
 public class SubscriptionService {
 
-    private final PLanDAO planDAO;
+    private final PlanDAO planDAO;
     private final UserDAO userDAO;
     private final SubscriptionDAO subscriptionDAO;
 
     @Inject
-    public SubscriptionService(PLanDAO pLanDAO, UserDAO userDAO, SubscriptionDAO subscriptionDAO) {
+    public SubscriptionService(PlanDAO pLanDAO, UserDAO userDAO, SubscriptionDAO subscriptionDAO) {
         this.planDAO = pLanDAO;
         this.userDAO = userDAO;
         this.subscriptionDAO = subscriptionDAO;

@@ -1,14 +1,17 @@
 package com.traf;
 
+import com.github.benmanes.caffeine.cache.RemovalCause;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
-import com.traf.db.PLanDAO;
+import com.traf.db.PlanDAO;
 import com.traf.db.SubscriptionDAO;
 import com.traf.db.UserDAO;
 import com.traf.repository.UsageRepository;
 import com.traf.repository.UserUsageRepository;
+import com.traf.service.UsageSyncTask;
 import io.dropwizard.hibernate.HibernateBundle;
+import jakarta.inject.Provider;
 import org.hibernate.SessionFactory;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
@@ -24,10 +27,17 @@ public class SubscriptionModule extends AbstractModule {
 
     @Provides
     @Singleton
-    public Cache<Long, Integer> provideUsageCache() {
+    public Cache<Long, Integer> provideUsageCache(Provider<UsageSyncTask> syncTaskProvider) {
         return Caffeine.newBuilder()
-                .expireAfterWrite(Duration.ofMinutes(59)) // Cache entries expire after 10 minutes
-                .maximumSize(100) // Maximum of 1000 entries in the cache
+                .maximumSize(100)
+                .expireAfterWrite(Duration.ofMinutes(59))
+                .evictionListener((Long userId, Integer count, RemovalCause cause) -> {
+                    if (cause.wasEvicted()) {
+                        // Fetch the actual task instance only when needed
+                        UsageSyncTask task = syncTaskProvider.get();
+                        task.syncToDatabaseForUser(userId, count);
+                    }
+                })
                 .build();
     }
 
@@ -45,8 +55,8 @@ public class SubscriptionModule extends AbstractModule {
 
     @Provides
     @Singleton
-    public PLanDAO providePlanDAO(SessionFactory sessionFactory) {
-        return new PLanDAO(sessionFactory);
+    public PlanDAO providePlanDAO(SessionFactory sessionFactory) {
+        return new PlanDAO(sessionFactory);
     }
 
     @Provides
